@@ -1,0 +1,51 @@
+name: Update AROME Portugal GRIB2
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 5,17 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download latest IPMA AROME
+        run: |
+          curl -L --fail --retry 3 \
+          "https://mf2.ipma.pt/downloads/?latest=arome.10m.wind&region=PT2" \
+          -o latest.nc
+
+      - name: Convert NetCDF to GRIB2
+        run: |
+          python convert_ipma_to_grib.py latest.nc arome-ipma-pt2-wind.grib2
+
+      - name: Publish latest GRIB2
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest AROME Portugal
+          prerelease: false
+          make_latest: true
+          files: arome-ipma-pt2-wind.grib2
