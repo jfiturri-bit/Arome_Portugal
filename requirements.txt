@@ -1,0 +1,4 @@
+h5py>=3.10
+numpy>=1.26
+scipy>=1.12
+eccodes>=1.7
