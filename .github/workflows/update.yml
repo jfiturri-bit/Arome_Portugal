@@ -30,93 +30,93 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      -  name: Download latest IPMA AROME UVCOMP
+
+      - name: Download latest IPMA AROME UVCOMP
         run: |
           python - <<'PY'
-          from datetime import datetime, timedelta, timezone
+          import datetime
           import os
           import subprocess
+          import time
 
-          now = datetime.now(timezone.utc)
+          base = "https://mf2.ipma.pt/downloads/data/arome"
+          now = datetime.datetime.now(datetime.timezone.utc)
+
           candidates = []
-
-          for days_ago in range(3):
-              day = now.date() - timedelta(days=days_ago)
-
-              for hour in (12, 0):
-                  dt = datetime(
-                      day.year, day.month, day.day,
-                      hour, tzinfo=timezone.utc
-                  )
-
-                  filename = (
-                      f"AROME_OPER_001_FC_SP_PT2_025_UVCOMP_10-HTGL_"
-                      f"{dt:%Y%m%d%H}.nc"
-                  )
-
-                  url = (
-                      f"https://mf2.ipma.pt/downloads/data/arome/"
-                      f"{dt:%Y/%m/%d}/run_{hour:02d}/{filename}"
-                  )
-
-                  candidates.append((dt, url))
+          for days_back in range(3):
+              d = now - datetime.timedelta(days=days_back)
+              for run in (12, 0):
+                  dt = d.replace(hour=run, minute=0, second=0, microsecond=0)
+                  if dt <= now:
+                      candidates.append(dt)
 
           candidates.sort(reverse=True)
 
-          downloaded = False
+          def download_with_resume(url, target):
+              if os.path.exists(target):
+                  os.remove(target)
 
-          for dt, url in candidates:
-              print("Trying:", url)
+              for attempt in range(30):
+                  size = os.path.getsize(target) if os.path.exists(target) else 0
+                  print(f"Attempt {attempt+1}: {size/1024/1024:.1f} MB downloaded")
 
-              if os.path.exists("latest.nc"):
-                  os.remove("latest.nc")
+                  result = subprocess.run([
+                      "curl",
+                      "-L",
+                      "--fail",
+                      "--connect-timeout", "30",
+                      "--max-time", "180",
+                      "-C", "-",
+                      "-o", target,
+                      url
+                  ])
 
-              result = subprocess.run([
-                  "curl",
-                  "-L",
-                  "--fail",
-                  "--retry", "10",
-                  "--retry-delay", "10",
-                  "--retry-all-errors",
-                  "--connect-timeout", "30",
-                  "--max-time", "1800",
-                  "-C", "-",
-                  url,
-                  "-o", "latest.nc"
-              ])
+                  if result.returncode == 0:
+                      print("Download completed.")
+                      return True
 
-              if result.returncode == 0 and os.path.getsize("latest.nc") > 1000000:
-                  print("Downloaded:", filename)
-                  print("Size:", os.path.getsize("latest.nc"))
-                  downloaded = True
-                  break
+                  print(f"Connection interrupted. Resuming in 5 seconds...")
+                  time.sleep(5)
 
-          if not downloaded:
-              raise RuntimeError("Could not download any recent IPMA AROME UVCOMP file")
+              return False
+
+          for dt in candidates:
+              date = dt.strftime("%Y/%m/%d")
+              run = dt.strftime("%H")
+              stamp = dt.strftime("%Y%m%d%H")
+
+              filename = (
+                  f"AROME_OPER_001_FC_SP_PT2_025_"
+                  f"UVCOMP_10-HTGL_{stamp}.nc"
+              )
+
+              url = f"{base}/{date}/run_{run}/{filename}"
+              print(f"Trying: {url}")
+
+              if download_with_resume(url, "latest.nc"):
+                  print(f"SUCCESS: {url}")
+                  raise SystemExit(0)
+
+          raise RuntimeError("Could not download recent IPMA AROME UVCOMP")
           PY
 
-    
       - name: Inspect downloaded NetCDF
         run: |
           python - <<'PY'
           import h5py
+          import os
 
+          print("File size:", os.path.getsize("latest.nc"))
           with h5py.File("latest.nc", "r") as f:
-              print("Top-level variables/groups:")
-              for key in f.keys():
-                  print(" -", key)
-
-              if "UV" in f:
-                  print("UV shape:", f["UV"].shape)
-              else:
-                  print("WARNING: UV not found at top level")
+              print("Variables:", list(f.keys()))
+              if "UV" not in f:
+                  raise RuntimeError("UV variable not found")
+              print("UV shape:", f["UV"].shape)
           PY
 
       - name: Convert NetCDF to GRIB2
         run: |
-          python convert_ipma_to_grib.py \
-            latest.nc \
-            arome-ipma-pt2-wind.grib2
+          python convert_ipma_to_grib.py latest.nc arome-ipma-pt2-wind.grib2
 
       - name: Publish latest GRIB2
         uses: softprops/action-gh-release@v2
