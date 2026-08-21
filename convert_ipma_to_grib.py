@@ -146,7 +146,7 @@ def write_field(gid, path, ref, step_hour, lats, lons, values, param_number, sho
 
       arr[missing] = 9999.0
 
-  codes_set_values(gid, arr)
+    codes_set_values(gid, arr)
     codes_write(gid, path)
     codes_release(gid)
 
