@@ -135,7 +135,18 @@ def write_field(gid, path, ref, step_hour, lats, lons, values, param_number, sho
     codes_set(gid, "bitsPerValue", 16)
     codes_set(gid, "packingType", "grid_simple")
     set_grid_keys(gid, lats, lons)
-    codes_set_values(gid, np.asarray(values, dtype=np.float64).ravel())
+    arr = np.asarray(values, dtype=np.float64).ravel()
+
+    if not np.all(np.isfinite(arr)):
+      arr = arr.copy()
+      missing = ~np.isfinite(arr)
+
+      codes_set(gid, "bitmapPresent", 1)
+      codes_set(gid, "missingValue", 9999.0)
+
+      arr[missing] = 9999.0
+
+  codes_set_values(gid, arr)
     codes_write(gid, path)
     codes_release(gid)
 
