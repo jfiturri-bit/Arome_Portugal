@@ -42,7 +42,13 @@ def lonlat_from_mercator_xy(x: np.ndarray, y: np.ndarray):
 
 def read_input(path: Path):
     with h5py.File(path, "r") as f:
-        uv = np.asarray(f["UV"], dtype=np.float32)
+        uv_dataset = f["UV"]
+        uv = np.asarray(uv_dataset, dtype=np.float32)
+
+        scale_factor = uv_dataset.attrs.get("scale_factor", 1.0)
+        add_offset = uv_dataset.attrs.get("add_offset", 0.0)
+
+        uv = uv * scale_factor + add_offset
         times = np.asarray(f["time"], dtype=np.int32)
         x = np.asarray(f["x"], dtype=np.float64)
         y = np.asarray(f["y"], dtype=np.float64)
