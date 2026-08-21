@@ -31,32 +31,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Download latest IPMA AROME
-        run: |
-          URL="https://mf2.ipma.pt/downloads/?latest=arome.10m.wind&region=PT2"
-
-          for attempt in 1 2 3 4 5 6 7 8; do
-            echo "Download attempt $attempt..."
-            curl -L \
-              --fail \
-              --connect-timeout 30 \
-              --max-time 600 \
-              -C - \
-              "$URL" \
-              -o latest.nc && break
-
-            echo "Connection interrupted. Resuming in 10 seconds..."
-            sleep 10
-          done
-
-          test -s latest.nc
-          echo "Downloaded:"
-          ls -lh latest.nc
+     
 
       - name: Convert NetCDF to GRIB2
         run: |
           python convert_ipma_to_grib.py latest.nc arome-ipma-pt2-wind.grib2
+      - name: Download latest IPMA AROME UVCOMP
+        run: |
+          URL="https://mf2.ipma.pt/downloads/?latest=arome.10m.wind&region=PT2"
 
+          curl -L --fail --retry 5 --retry-delay 10 \
+            --connect-timeout 30 \
+            --max-time 900 \
+            "$URL" \
+            -o latest.nc
+
+          python - <<'PY'
+          import h5py
+
+          with h5py.File("latest.nc", "r") as f:
+              print("Variables found:", list(f.keys()))
+              if "UV" not in f:
+                  raise SystemExit("ERROR: downloaded file does not contain UV variable")
+              print("UV shape:", f["UV"].shape)
+          PY
       - name: Publish latest GRIB2
         uses: softprops/action-gh-release@v2
         with:
