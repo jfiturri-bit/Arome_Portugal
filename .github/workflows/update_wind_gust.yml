@@ -2,6 +2,8 @@ name: Update AROME Portugal Wind+Gust TEST
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "30 5,17 * * *"
 
 permissions:
   contents: write
