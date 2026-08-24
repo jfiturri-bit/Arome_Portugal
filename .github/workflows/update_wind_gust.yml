@@ -94,10 +94,12 @@ jobs:
         run: |
           python convert_ipma_to_grib_wind_gust.py wind.nc gust.nc arome-ipma-pt2-wind-gust.grib2
 
-      - name: Publish TEST GRIB2
+        
+      - name: Publish latest AROME Portugal
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: wind-gust-test
-          name: AROME Portugal Wind+Gust TEST
-          prerelease: true
+          tag_name: latest
+          name: Latest AROME Portugal
+          prerelease: false
+          make_latest: true
           files: arome-ipma-pt2-wind-gust.grib2
