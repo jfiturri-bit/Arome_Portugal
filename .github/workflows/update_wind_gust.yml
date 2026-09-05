@@ -1,9 +1,9 @@
-name: Update AROME Portugal Wind+Gust TEST
+name: Update AROME Portugal Wind+Gust
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 19,7 * * *"
+    - cron: "0 7,19 * * *"
 
 permissions:
   contents: write
@@ -31,70 +31,111 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Download matching IPMA wind and gust
+      - name: Download latest IPMA wind and gust
+        run: |
+          set -e
+
+          USERAGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0 Safari/537.36"
+          REFERER="https://mf2.ipma.pt/downloads/"
+
+          WIND_URL="https://mf2.ipma.pt/downloads/?latest=arome.10m.wind&region=PT2"
+          GUST_URL="https://mf2.ipma.pt/downloads/?latest=arome.10m.gustintensity&region=PT2"
+
+          # Start a normal web session and keep cookies
+          curl -L \
+            -A "$USERAGENT" \
+            -e "$REFERER" \
+            -c cookies.txt \
+            "$REFERER" \
+            -o /dev/null || true
+
+          download_file () {
+            URL="$1"
+            FILE="$2"
+
+            rm -f "$FILE"
+
+            for attempt in $(seq 1 20); do
+              echo "Attempt $attempt downloading $FILE"
+
+              curl -L \
+                --fail \
+                --connect-timeout 30 \
+                --max-time 240 \
+                -A "$USERAGENT" \
+                -e "$REFERER" \
+                -b cookies.txt \
+                -c cookies.txt \
+                -C - \
+                "$URL" \
+                -o "$FILE" && return 0
+
+              echo "Download interrupted or rejected. Waiting 15 seconds..."
+              sleep 15
+            done
+
+            return 1
+          }
+
+          download_file "$WIND_URL" wind.nc
+          download_file "$GUST_URL" gust.nc
+
+          ls -lh wind.nc gust.nc
+
+      - name: Validate NetCDF and matching AROME run
         run: |
           python - <<'PY'
-          import datetime
+          import h5py
           import os
-          import subprocess
-          import time
 
-          base = "https://mf2.ipma.pt/downloads/data/arome"
-          now = datetime.datetime.now(datetime.timezone.utc)
+          def inspect(path):
+              if os.path.getsize(path) < 1000000:
+                  raise RuntimeError(f"{path} is suspiciously small")
 
-          candidates = []
-          for days_back in range(3):
-              d = now - datetime.timedelta(days=days_back)
-              for run in (12, 0):
-                  dt = d.replace(hour=run, minute=0, second=0, microsecond=0)
-                  if dt <= now:
-                      candidates.append(dt)
-          candidates.sort(reverse=True)
+              with h5py.File(path, "r") as f:
+                  if "UV" not in f:
+                      raise RuntimeError(f"{path}: UV variable not found")
 
-          def download_with_resume(url, target):
-              if os.path.exists(target):
-                  os.remove(target)
-              for attempt in range(30):
-                  size = os.path.getsize(target) if os.path.exists(target) else 0
-                  print(f"{target} attempt {attempt+1}: {size/1024/1024:.1f} MB")
-                  r = subprocess.run([
-                      "curl", "-L", "--fail",
-                      "--connect-timeout", "30",
-                      "--max-time", "180",
-                      "-C", "-", "-o", target, url
-                  ])
-                  if r.returncode == 0:
-                      return True
-                  time.sleep(5)
-              return False
+                  if "time" not in f:
+                      raise RuntimeError(f"{path}: time variable not found")
 
-          for dt in candidates:
-              date = dt.strftime("%Y/%m/%d")
-              run = dt.strftime("%H")
-              stamp = dt.strftime("%Y%m%d%H")
-              root = f"{base}/{date}/run_{run}"
-              wind = f"{root}/AROME_OPER_001_FC_SP_PT2_025_UVCOMP_10-HTGL_{stamp}.nc"
-              gust = f"{root}/AROME_OPER_001_FC_SP_PT2_025_GUSTMOD_10-HTGL_{stamp}.nc"
+                  units = f["time"].attrs.get("units")
+                  if isinstance(units, bytes):
+                      units = units.decode()
 
-              print("Trying run", stamp)
-              if not download_with_resume(wind, "wind.nc"):
-                  continue
-              if not download_with_resume(gust, "gust.nc"):
-                  continue
+                  print(path)
+                  print("  UV shape:", f["UV"].shape)
+                  print("  time units:", units)
+                  return str(units)
 
-              with open("run.txt", "w") as f:
-                  f.write(stamp)
-              print("SUCCESS matching run:", stamp)
-              raise SystemExit(0)
+          wind_run = inspect("wind.nc")
+          gust_run = inspect("gust.nc")
 
-          raise RuntimeError("Could not download matching wind+gust run")
+          if wind_run != gust_run:
+              raise RuntimeError(
+                  f"Wind and gust belong to different runs: "
+                  f"{wind_run} vs {gust_run}"
+              )
+
+          print("MATCHING AROME RUN:", wind_run)
+
+          with open("run.txt", "w") as f:
+              f.write(wind_run)
           PY
 
       - name: Convert Wind+Gust to GRIB2
         run: |
-          python convert_ipma_to_grib_wind_gust.py wind.nc gust.nc arome-ipma-pt2-wind-gust.grib2
+          python convert_ipma_to_grib_wind_gust.py \
+            wind.nc \
+            gust.nc \
+            arome-ipma-pt2-wind-gust.grib2
 
-        
+      - name: Show selected AROME run
+        run: |
+          echo "AROME run used:"
+          cat run.txt
+          ls -lh arome-ipma-pt2-wind-gust.grib2
+
       - name: Publish latest AROME Portugal
         uses: softprops/action-gh-release@v2
         with:
